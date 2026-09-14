@@ -23,7 +23,7 @@
 /**
   *  Class constructor
   *
-  *  OJO: este constructor lo debe correr el proceso "main", ANTES de hacer los
+  *  Este constructor lo debe correr el proceso "main", antes de hacer los
   *  fork(). Así, cuando main haga fork(), cada hijo hereda una copia de este
   *  objeto con el mismo "id" de cola (el id de una cola de mensajes es un
   *  recurso del kernel, no un file descriptor de un solo proceso, así que

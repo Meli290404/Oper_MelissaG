@@ -17,7 +17,7 @@
 #include <time.h>
 #include <stdbool.h>
 
-#include "Buzon.h"	// Lo empezamos a usar de verdad a partir del próximo paso
+#include "Buzon.h"	
 
 #define MaxParticipantes 10
 
@@ -54,7 +54,7 @@ Buzon * buzonGlobal = NULL;	// main() lo crea antes de los fork()
   *  Estructura para el paso de mensajes entre procesos
  **/
 struct RondaPapa {
-   int  papa;	// valor actual de la papa; si es NEGATIVO, el juego terminó
+   long papa;	// valor actual de la papa; si es NEGATIVO, el juego terminó
    int  origen;	// quién manda: el id (0..n-1) de quien reenvió este mensaje
 };
 
@@ -95,7 +95,7 @@ int vecinoAnterior( int id ) {
   *  Aplica las reglas de Collatz al valor de la papa
   *
  **/
-int cambiarPapa( int papa ) {
+long cambiarPapa( long papa ) {
 
    if ( 1 == (papa & 0x1) ) {		// papa es impar
             papa = (papa << 1) + papa + 1;	// papa = papa * 2 + papa + 1
@@ -150,10 +150,13 @@ int participante( int id ) {
          break;
       }
 
+      // Pausa chiquita para que la ronda tenga un ritmo observable
+      usleep( 50000 + random() % 100000 );
+
       if ( activo ) {
 
          mensaje.papa = cambiarPapa( mensaje.papa );
-         printf( "Participante %d (activo): nuevo valor de la papa = %d\n", id, mensaje.papa );
+         printf( "Participante %d (activo): nuevo valor de la papa = %ld\n", id, mensaje.papa );
 
          if ( 1 == mensaje.papa ) {
             // Exploté: paso a pasivo, pero sigo vivo reenviando
@@ -176,7 +179,7 @@ int participante( int id ) {
             } else {
                // Todavía quedan activos: le dejo el contador al que siga
                buzonGlobal->Enviar( &contador, sizeof( contador ), BUZON_CONTADOR );
-               mensaje.papa = 2 + random() % 9999;	// nuevo valor al azar para que el juego siga
+               mensaje.papa = 2 + random() % 500;	// nuevo valor al azar para que el juego siga
             }
          }
 
@@ -240,7 +243,15 @@ int invasor( int id ) {
 
 
 int main( int argc, char ** argv ) {
-   int buzon, id, i, j, resultado;
+   int i, resultado;
+   int arranque;
+   long valorInicial;
+   RondaPapa semilla;
+
+   // Sin esto, cada fork() se lleva una copia del buffer de salida
+   // pendiente, y cuando cada hijo lo vacia por su cuenta, se repiten
+   // lineas que en realidad solo se imprimieron "a medias" antes del fork
+   setvbuf( stdout, NULL, _IONBF, 0 );
 
    if ( argc > 1 ) {
       participantes = atoi( argv[ 1 ] );
@@ -251,25 +262,68 @@ int main( int argc, char ** argv ) {
 
    srandom( getpid() );
 
-   printf( "Creando una ronda de %d participantes\n", participantes );
-   for ( i = 1; i <= participantes; i++ ) {
+   // Direccion de giro: la leo del tercer parametro si vino, si no la genero al azar
+   if ( argc > 3 && 0 == strcmp( argv[ 3 ], "counter-clockwise" ) ) {
+      direccion = COUNTER_CLOCKWISE;
+   } else if ( argc > 3 ) {
+      direccion = CLOCKWISE;	// vino algo, pero no "counter-clockwise" -> asumo clockwise
+   } else {
+      direccion = ( random() % 2 ) ? COUNTER_CLOCKWISE : CLOCKWISE;
+   }
+
+   // Valor inicial de la papa: viene del segundo parametro, o lo invento
+   if ( argc > 2 && atol( argv[ 2 ] ) > 0 ) {
+      valorInicial = atol( argv[ 2 ] );
+   } else {
+      valorInicial = 2 + random() % 9999;
+   }
+
+   printf( "Creando una ronda de %d participantes, papa inicial = %ld, direccion = %s\n",
+           participantes, valorInicial, ( CLOCKWISE == direccion ) ? "clockwise" : "counter-clockwise" );
+
+   // Genero el buzon (la cola de mensajes) antes de los fork, asi todos
+   // los hijos heredan una copia de este objeto, apuntando a la misma
+   // cola del kernel
+   buzonGlobal = new Buzon();
+
+   // Creo los participantes, con id 0..participantes-1 (asi lo pide el enunciado)
+   for ( i = 0; i < participantes; i++ ) {
       if ( ! fork() ) {
          participante( i );
       }
    }
 
-// El programa principal decidirá cual es el primer participante en arrancar y el valor inicial de la papa
-
-// Creación del proceso invasor
+   // Creacion del proceso invasor, le doy id = participantes (asi
+   // BUZON_INVASOR = DESTINO(participantes) le llega solo a el)
    if ( ! fork() ) {
-      invasor( i );
+      invasor( participantes );
    }
 
-// Espera que los participantes finalicen
-   for ( i = 1; i <= participantes; i++ ) {
-      j = wait( &resultado );
+   // Inicializo el contador de activos, lo van a usar los participantes
+   // para saber quien es el ultimo en salir
+   buzonGlobal->Enviar( &participantes, sizeof( participantes ), BUZON_CONTADOR );
+
+   // Elijo al azar quien arranca la ronda
+   arranque = random() % participantes;
+
+   // Mando el mensaje semilla, "disfrazado" del vecino real de quien
+   // arranca, para que lo registre como su vecino valido sin necesitar
+   // casos especiales dentro de participante()
+   semilla.papa   = valorInicial;
+   semilla.origen = vecinoAnterior( arranque );
+   buzonGlobal->Enviar( &semilla, sizeof( semilla ), DESTINO( arranque ) );
+
+   printf( "Arranca el participante %d con papa = %ld\n", arranque, valorInicial );
+
+   // main no participa en la ronda ni en las decisiones de sincronizacion,
+   // solo espera a que todos los hijos (participantes + invasor) terminen
+   for ( i = 0; i < participantes + 1; i++ ) {
+      wait( &resultado );
    }
-   
-   j = wait( &resultado );  // Espera por el invador
+
+   // Ya terminaron todos, elimino el buzon
+   delete buzonGlobal;
+
+   return 0;
 
 }
