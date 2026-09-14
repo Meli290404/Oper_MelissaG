@@ -11,6 +11,7 @@
 
 #include <stdexcept>
 #include <cstring>	// memcpy, strlen
+#include <cerrno>	// errno, ENOMSG
 
 #include <sys/ipc.h>
 #include <sys/msg.h>
@@ -22,7 +23,7 @@
 /**
   *  Class constructor
   *
-  *  Este constructor lo debe correr el proceso "main", antes de hacer los
+  *  OJO: este constructor lo debe correr el proceso "main", ANTES de hacer los
   *  fork(). Así, cuando main haga fork(), cada hijo hereda una copia de este
   *  objeto con el mismo "id" de cola (el id de una cola de mensajes es un
   *  recurso del kernel, no un file descriptor de un solo proceso, así que
@@ -52,7 +53,7 @@ Buzon::Buzon() {
   *
   *  Solo el proceso que creó la cola (owner) debe destruirla. Si un hijo
   *  termina y su copia del objeto Buzon se destruye (sale de scope o hace
-  *  exit), no se quiere que borre la cola que los demás siguen usando.
+  *  exit), NO queremos que borre la cola que los demás siguen usando.
   *
  **/
 Buzon::~Buzon() {
@@ -102,7 +103,7 @@ int Buzon::Enviar( const char * mensaje, long tipo ) {
   *  msgsnd necesita un bloque de memoria que empiece con un "long mtype"
   *  seguido de los datos, pegados uno después del otro. Como a este método
   *  le llega el mensaje aparte (mensaje/cantidad) y el tipo aparte (tipo),
-  *  se arma un bloque con memcpy antes de mandarlo.
+  *  tengo que armar ese bloque "a mano" con memcpy antes de mandarlo.
   *
  **/
 int Buzon::Enviar( const void * mensaje, int cantidad, long tipo ) {
@@ -114,7 +115,7 @@ int Buzon::Enviar( const void * mensaje, int cantidad, long tipo ) {
    memcpy( buffer, &tipo, sizeof( long ) );			// primero el tipo
    memcpy( buffer + sizeof( long ), mensaje, cantidad );	// luego los datos
 
-   // msgsz es solo el tamaño de los datos, sin contar el mtype
+   // msgsz es SOLO el tamaño de los datos, sin contar el mtype
    st = msgsnd( id, buffer, cantidad, 0 );
 
    delete [] buffer;
@@ -133,20 +134,32 @@ int Buzon::Enviar( const void * mensaje, int cantidad, long tipo ) {
   *
   *  @param     const void * mensaje: estructura con el mensaje a enviar
   *  @param	int cantidad: cantidad de bytes a enviar
+  *  @param	bool esperar: true = se bloquea hasta que llegue un mensaje
+  *  			(comportamiento de siempre); false = revisa una sola vez
+  *  			y devuelve -1 de inmediato si no hay nada (usa IPC_NOWAIT)
   *
-  *  Si mando tipo = id+1, msgrcv solo me entrega mensajes dirigidos a mí, aunque otros procesos hayan
-  *  dejado mensajes suyos en la misma cola.
+  *  El caso "false" lo necesita el invasor: tiene que revisar de rato en
+  *  rato si ya le avisaron que el juego terminó, sin quedarse pegado
+  *  esperando ese mensaje en vez de seguir generando interferencia.
   *
  **/
-int Buzon::Recibir( void * mensaje, int cantidad, long tipo ) {
+int Buzon::Recibir( void * mensaje, int cantidad, long tipo, bool esperar ) {
    int st = -1;
+   int flags = esperar ? 0 : IPC_NOWAIT;
 
    char * buffer = new char[ sizeof( long ) + cantidad ];
 
-   st = msgrcv( id, buffer, cantidad, tipo, 0 );
+   st = msgrcv( id, buffer, cantidad, tipo, flags );
 
    if ( -1 == st ) {
       delete [] buffer;
+
+      // Con IPC_NOWAIT, "no hay mensaje todavia" no es un error real,
+      // es una respuesta válida a "¿ya llegó algo?" -> no lanzo excepción
+      if ( ! esperar && ENOMSG == errno ) {
+         return -1;
+      }
+
       throw std::runtime_error( "Buzon::Recibir( void *, int, long )" );
    }
 

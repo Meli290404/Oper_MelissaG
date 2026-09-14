@@ -21,7 +21,7 @@ class Buzon {
       ~Buzon();
       int Enviar( const char *mensaje, long = 1 );
       int Enviar( const void *mensaje, int, long = 1 );
-      int Recibir( void *mensaje, int, long = 1 );	// len: space in mensaje
+      int Recibir( void *mensaje, int, long = 1, bool = true );	// len: space in mensaje; el ultimo bool: true = bloqueante, false = no bloqueante
 
    private:
       int id;		// Identificador del buzon

@@ -200,6 +200,40 @@ int participante( int id ) {
  **/
 int invasor( int id ) {
 
+   RondaPapa mensaje;
+   int destino, origenFalso;
+
+   srandom( getpid() );
+
+   // El invasor tarda un poco en arrancar. Mientras
+   // tanto, los mensajes de la primera vuelta sí vienen de emisores
+   // válidos, tal como lo garantiza el enunciado.
+   sleep( 2 + random() % 3 );
+
+   while ( true ) {
+
+      // Reviso sin bloquear si ya me avisaron que el juego termino
+      if ( -1 != buzonGlobal->Recibir( &mensaje, sizeof( mensaje ), BUZON_INVASOR, false ) ) {
+         printf( "Invasor: me avisaron que el juego termino, salgo\n" );
+         break;
+      }
+
+      // Invento un mensaje: a quién se lo mando y de parte de quién
+      // dice venir (el participante lo va a comparar contra el vecino
+      // que registró de verdad, y si no coincide lo descarta)
+      destino     = random() % participantes;
+      origenFalso = random() % participantes;
+
+      mensaje.papa   = 1 + random() % 9999;
+      mensaje.origen = origenFalso;
+
+      printf( "Invasor: mando mensaje falso a %d, dice venir de %d\n", destino, origenFalso );
+      buzonGlobal->Enviar( &mensaje, sizeof( mensaje ), DESTINO( destino ) );
+
+      sleep( 1 + random() % 2 );
+
+   }
+
    _exit( 0 );	// Everything OK
 
 }
