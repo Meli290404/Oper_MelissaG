@@ -18,6 +18,7 @@
 #include "diningph.h"
 
 DiningPh * dp;
+Semaphore * terminados; // el main espera a que acaben los filósofos
 
 void Philo( void * p ) {
 
@@ -43,6 +44,8 @@ void Philo( void * p ) {
         currentThread->Yield();
         sleep( thinks );
     }
+
+    terminados->V(); // avisa a el main que el filósofo terminó
 
 }
 
@@ -106,16 +109,22 @@ ThreadTest()
 
     DEBUG('t', "Entering SimpleTest");
 
-/*
     dp = new DiningPh();
+    terminados = new Semaphore("terminados", 0);
 
     for ( long k = 0; k < 5; k++ ) {
-        Ph = new Thread( "dp" );
+        char * name = new char[20];
+        sprintf( name, "Philosopher %ld", k + 1 );
+        Ph = new Thread( name );
         Ph->Fork( Philo, (void *) k );
     }
 
+    for (int k = 0; k < 5; k++) {
+        terminados->P(); // espera a que terminen los filósofos
+    }
+
     return;
-*/
+
     char * threadName;
     Thread * newThread;
     for ( int k=1; k<5; k++ ) {
