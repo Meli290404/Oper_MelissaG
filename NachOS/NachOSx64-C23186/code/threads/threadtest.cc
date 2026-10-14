@@ -18,7 +18,7 @@
 #include "diningph.h"
 
 DiningPh * dp;
-Semaphore * terminados; // el main espera a que acaben los filósofos
+Semaphore * terminados; // el main espera a que acaben los hilos
 
 void Philo( void * p ) {
 
@@ -80,7 +80,24 @@ void H( void * p ) {
 }
 
 void O( void * p ) {
+    long id = (long) p;
+    currentThread->Yield();
 
+    mutexAgua->P();
+    printf("Llega O%ld [O=%d, H=%d]\n", id, cO, cH);
+    if (cH > 1) {
+        cH -= 2;
+        moleculas++;
+        printf("Se forma agua con O%ld [O=%d, H=%d]\n", id, cO, cH);
+        sH->V(); // se despierta a un H que estaba esperando
+        sH->V(); // se despierta a otro H que estaba esperando
+        mutexAgua->V();
+    } else {
+        cO++;
+        mutexAgua->V();
+        sO->P();
+    }
+    terminados->V(); // avisa a el main que el O terminó
 }
 
 //----------------------------------------------------------------------
@@ -117,6 +134,63 @@ SimpleThread(void* name)
 
 }
 
+void PruebaFilosofos() {
+    Thread * Ph;
+    dp = new DiningPh();
+
+    for ( long k = 0; k < 5; k++ ) {
+        char * name = new char[ 20 ];
+        sprintf( name, "Filosofo %ld", k + 1 );
+        Ph = new Thread( name );
+        Ph->Fork( Philo, (void *) k );
+    }
+
+    for ( int k = 0; k < 5; k++ ) {
+        terminados->P();
+    }
+}
+
+void PruebaAgua() {
+    const int MOLECULAS = 10;
+    const int ATOMOS = 3 * MOLECULAS;
+    int esOxigeno[ ATOMOS ];
+    Thread * t;
+
+    sH = new Semaphore( "sH", 0 );
+    sO = new Semaphore( "sO", 0 );
+    mutexAgua = new Semaphore( "mutexAgua", 1 );
+
+    // N oxigenos y 2N hidrogenos, mezclados al azar 
+    for ( int i = 0; i < ATOMOS; i++ ) {
+        esOxigeno[ i ] = ( i < MOLECULAS );
+    }
+    for ( int i = ATOMOS - 1; i > 0; i-- ) {
+        int j = Random() % ( i + 1 );
+        int tmp = esOxigeno[ i ];
+        esOxigeno[ i ] = esOxigeno[ j ];
+        esOxigeno[ j ] = tmp;
+    }
+
+    long nH = 0, nO = 0;
+    for ( int i = 0; i < ATOMOS; i++ ) {
+        char * name = new char[ 20 ];
+        if ( esOxigeno[ i ] ) {
+            sprintf( name, "O%ld", nO );
+            t = new Thread( name );
+            t->Fork( O, (void *) nO++ );
+        } else {
+            sprintf( name, "H%ld", nH );
+            t = new Thread( name );
+            t->Fork( H, (void *) nH++ );
+        }
+    }
+
+    for ( int i = 0; i < ATOMOS; i++ ) {   // esperar a todos los atomos
+        terminados->P();
+    }
+
+    printf( "\nSe formaron %d moleculas de agua. Quedan O=%d, H=%d\n", moleculas, cO, cH );
+}
 
 
 //----------------------------------------------------------------------
@@ -129,26 +203,14 @@ SimpleThread(void* name)
 void
 ThreadTest()
 {
-    Thread * Ph;
-
     DEBUG('t', "Entering SimpleTest");
 
-    dp = new DiningPh();
-    terminados = new Semaphore("terminados", 0);
+    terminados = new Semaphore( "terminados", 0 );
 
-    for ( long k = 0; k < 5; k++ ) {
-        char * name = new char[20];
-        sprintf( name, "Philosopher %ld", k + 1 );
-        Ph = new Thread( name );
-        Ph->Fork( Philo, (void *) k );
-    }
+    PruebaFilosofos();
+    PruebaAgua();
 
-    for (int k = 0; k < 5; k++) {
-        terminados->P(); // espera a que terminen los filósofos
-    }
-
-    return;
-
+/*  Código original de prueba (SimpleThread)
     char * threadName;
     Thread * newThread;
     for ( int k=1; k<5; k++ ) {
@@ -159,10 +221,11 @@ ThreadTest()
     }
 
     currentThread->Yield();
- 
+
     SimpleThread( (void*) "Hilo 0" );
 
     currentThread->Finish();
+*/
 
 }
 
