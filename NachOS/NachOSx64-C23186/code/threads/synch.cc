@@ -157,26 +157,42 @@ bool Lock::isHeldByCurrentThread() {
 
 
 Condition::Condition(const char* debugName) {
-
+    name = (char *) debugName;
+    queue = new List<Semaphore*>;
 }
 
 
 Condition::~Condition() {
-
+    delete queue;
 }
 
 
 void Condition::Wait( Lock * conditionLock ) {
-
+    ASSERT(conditionLock->isHeldByCurrentThread()); // el hilo debe tener el lock para esperar
+    Semaphore * waiter = new Semaphore("condWaiter", 0); 
+    queue->Append(waiter);
+    conditionLock->Release(); // libera el lock antes de dormir
+    waiter->P(); // espera a que lo despierten
+    conditionLock->Acquire(); // vuelve a adquirir el lock al despertar
+    delete waiter; // libera el semáforo del hilo que ya no lo necesita
 }
 
 
 void Condition::Signal( Lock * conditionLock ) {
-
+    ASSERT(conditionLock->isHeldByCurrentThread()); // el hilo debe tener el lock para señalar
+    if (!queue->IsEmpty()) {
+        Semaphore * waiter = queue->Remove();
+        waiter->V(); // despierta al hilo que estaba esperando
+    }
 }
 
 
 void Condition::Broadcast( Lock * conditionLock ) {
+    ASSERT(conditionLock->isHeldByCurrentThread()); // el hilo debe tener el lock para hacer broadcast
+    while (!queue->IsEmpty()) {
+        Semaphore * waiter = queue->Remove();
+        waiter->V(); // despierta a todos los hilos que estaban esperando
+    }
 }
 
 
