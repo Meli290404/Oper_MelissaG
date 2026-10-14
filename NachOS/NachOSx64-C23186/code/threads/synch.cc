@@ -125,27 +125,34 @@ Semaphore::Destroy()
 // Note -- without a correct implementation of Condition::Wait(), 
 // the test case in the network assignment won't work!
 Lock::Lock(const char* debugName) {
+    name = (char *)debugName;
+    sem = new Semaphore(debugName, 1);
+    owner = NULL;
 
 }
 
 
 Lock::~Lock() {
-
+    delete sem;
 }
 
 
 void Lock::Acquire() {
-
+    ASSERT(!isHeldByCurrentThread()); // el hilo no puede adquirir un lock que ya tiene
+    sem->P();
+    owner = currentThread;
 }
 
 
 void Lock::Release() {
-
+    ASSERT(isHeldByCurrentThread()); // el hilo no puede liberar un lock que no tiene
+    owner = NULL;
+    sem->V();
 }
 
 
 bool Lock::isHeldByCurrentThread() {
-   return false;
+   return owner == currentThread;
 }
 
 
