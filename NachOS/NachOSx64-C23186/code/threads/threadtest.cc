@@ -51,12 +51,36 @@ void Philo( void * p ) {
 
 int cO = 0;
 int cH = 0;
-Semaphore * sH;
+Semaphore * sH; //aquí esperan los H sin pareja
+Semaphore * sO; //aquí esperan los O sin pareja
+Semaphore * mutexAgua; //protege c0, cH y moleculas
+int moleculas = 0; //cuenta cuantas moléculas se han formado
 
 void H( void * p ) {
+    long id = (long) p;
+    currentThread->Yield();
+
+    mutexAgua->P();
+    printf("Llega H%ld [O=%d, H=%d]\n", id, cO, cH);
+    if (cH > 0 && cO > 0) {
+        cH--;
+        cO--;
+        moleculas++;
+        printf("Se forma agua con H%ld [O=%d, H=%d]\n", id, cO, cH);
+        sO->V(); // se despierta al H que estaba esperando
+        sH->V(); // se despierta al O que estaba esperando
+        mutexAgua->V();
+    } else {
+        cH++;
+        mutexAgua->V();
+        sH->P();
+    }
+
+    terminados->V(); // avisa a el main que el H terminó
 }
 
 void O( void * p ) {
+
 }
 
 //----------------------------------------------------------------------
