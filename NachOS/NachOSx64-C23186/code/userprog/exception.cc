@@ -27,6 +27,7 @@
 #include "copyright.h"
 #include "system.h"
 #include "syscall.h"
+#include "synch.h"
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -62,6 +63,31 @@ void leerCadena( int direccion, char * destino, int maximo ) {
 }
 
 /*
+ *  tabla de procesos para exec y join
+ *  cada proceso creado con exec recibe una entrada con un semaforo
+ *  donde join espera hasta que el proceso haga exit
+ */
+#define MAX_PROCESOS 32
+
+BitMap * mapaProcesos = NULL;			// entradas ocupadas de la tabla
+Semaphore * procesoTermino[ MAX_PROCESOS ];	// exit hace v, join hace p
+int estadoSalida[ MAX_PROCESOS ];		// valor que el proceso le paso a exit
+
+int nuevoProceso() {
+   if ( mapaProcesos == NULL ) {
+      mapaProcesos = new BitMap( MAX_PROCESOS );
+   }
+
+   int id = mapaProcesos->Find();
+   if ( id != -1 ) {
+      procesoTermino[ id ] = new Semaphore( "proceso termino", 0 );
+      estadoSalida[ id ] = 0;
+   }
+
+   return id;
+}
+
+/*
  *  System call interface: Halt()
  */
 void NachOS_Halt() {		// System call 0
@@ -79,7 +105,37 @@ void NachOS_Exit() {		// System call 1
    int status = machine->ReadRegister( 4 );
 
    DEBUG( 'a', "Exit con estado %d\n", status );
+
+   // si es el ultimo hilo del proceso cierra los archivos y borra la tabla
+   if ( currentThread->tablaArchivos->delThread() == 0 ) {
+      currentThread->tablaArchivos->closeAll();
+      delete currentThread->tablaArchivos;
+   }
+   currentThread->tablaArchivos = NULL;
+
+   // si el hilo lo creo exec, avisar a quien haga join y dejarle el estado
+   if ( currentThread->idProceso != -1 ) {
+      estadoSalida[ currentThread->idProceso ] = status;
+      procesoTermino[ currentThread->idProceso ]->V();
+   }
+
+   // la memoria se devuelve cuando el destructor del hilo borra su addrspace
    currentThread->Finish();
+
+}
+
+
+/*
+ *  rutina que ejecuta el hilo nuevo de exec dentro del kernel
+ *  empieza el programa desde la direccion 0 como lo hace startprocess
+ */
+void NachosExecThread( void * p ) {
+
+   currentThread->space->InitRegisters();
+   currentThread->space->RestoreState();
+
+   machine->Run();			// nunca regresa
+   ASSERT( false );
 }
 
 
@@ -87,6 +143,51 @@ void NachOS_Exit() {		// System call 1
  *  System call interface: SpaceId Exec( char * )
  */
 void NachOS_Exec() {		// System call 2
+   char nombre[ 256 ];
+   OpenFile * ejecutable;
+   int id;
+
+   leerCadena( machine->ReadRegister( 4 ), nombre, 256 );
+
+   ejecutable = fileSystem->Open( nombre );
+   if ( ejecutable == NULL ) {		// el archivo no existe
+      DEBUG( 'u', "exec: no se pudo abrir %s\n", nombre );
+      machine->WriteRegister( 2, -1 );
+      return;
+   }
+
+   // revisar que el programa quepa en los marcos libres
+   if ( AddrSpace::paginasNecesarias( ejecutable ) > (unsigned int) machine->mapaMemoria->NumClear() ) {
+      DEBUG( 'u', "exec: no hay memoria para %s\n", nombre );
+      delete ejecutable;
+      machine->WriteRegister( 2, -1 );
+      return;
+   }
+
+   id = nuevoProceso();
+   if ( id == -1 ) {			// tabla de procesos llena
+      delete ejecutable;
+      machine->WriteRegister( 2, -1 );
+      return;
+   }
+
+   // el destructor de thread libera el nombre, por eso se pide con new
+   char * nombreHilo = new char[ 256 ];
+   strcpy( nombreHilo, nombre );
+   Thread * hilo = new Thread( nombreHilo );
+
+   // proceso nuevo: memoria propia y tabla de archivos propia
+   hilo->space = new AddrSpace( ejecutable );
+   delete ejecutable;
+   hilo->tablaArchivos = new NachosOpenFilesTable();
+   hilo->tablaArchivos->addThread();
+   hilo->idProceso = id;
+
+   DEBUG( 'u', "exec: %s crea el proceso %d con %s\n", currentThread->getName(), id, nombre );
+   hilo->Fork( NachosExecThread, NULL );
+
+   machine->WriteRegister( 2, id );
+
 }
 
 
@@ -94,6 +195,21 @@ void NachOS_Exec() {		// System call 2
  *  System call interface: int Join( SpaceId )
  */
 void NachOS_Join() {		// System call 3
+   SpaceId id = machine->ReadRegister( 4 );
+
+   if ( mapaProcesos == NULL || id < 0 || id >= MAX_PROCESOS || ! mapaProcesos->Test( id ) ) {
+      machine->WriteRegister( 2, -1 );	// no existe un proceso con ese id
+      return;
+   }
+
+   DEBUG( 'u', "join: %s espera al proceso %d\n", currentThread->getName(), id );
+   procesoTermino[ id ]->P();		// si el proceso ya termino no espera
+
+   // devolver el estado y liberar la entrada de la tabla
+   machine->WriteRegister( 2, estadoSalida[ id ] );
+   delete procesoTermino[ id ];
+   mapaProcesos->Clear( id );
+
 }
 
 

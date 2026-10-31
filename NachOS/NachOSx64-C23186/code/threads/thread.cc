@@ -41,6 +41,7 @@ Thread::Thread(const char* threadName)
 #ifdef USER_PROGRAM
     space = NULL;
     tablaArchivos = NULL;
+    idProceso = -1;
 #endif
 }
 

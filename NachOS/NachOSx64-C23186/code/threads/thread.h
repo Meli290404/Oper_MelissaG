@@ -128,6 +128,7 @@ class Thread {
 
     AddrSpace *space;			// User code this thread is running.
     NachosOpenFilesTable *tablaArchivos;	// archivos abiertos del proceso, compartida entre sus hilos
+    int idProceso;			// identificador que devolvio exec, -1 si nadie puede hacerle join
 #endif
 };
 

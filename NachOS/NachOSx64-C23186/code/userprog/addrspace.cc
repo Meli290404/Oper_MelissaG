@@ -185,6 +185,26 @@ AddrSpace::AddrSpace( AddrSpace * padre )
 }
 
 //----------------------------------------------------------------------
+// AddrSpace::paginasNecesarias
+// 	lee el encabezado del ejecutable y calcula cuantas paginas ocuparia,
+//	sirve para revisar si hay memoria antes de crear el espacio
+//----------------------------------------------------------------------
+
+unsigned int AddrSpace::paginasNecesarias( OpenFile * ejecutable )
+{
+    NoffHeader noffH;
+    unsigned int size;
+
+    ejecutable->ReadAt((char *)&noffH, sizeof(noffH), 0);
+    if ((noffH.noffMagic != NOFFMAGIC) && 
+		(WordToHost(noffH.noffMagic) == NOFFMAGIC))
+    	SwapHeader(&noffH);
+
+    size = noffH.code.size + noffH.initData.size + noffH.uninitData.size + UserStackSize;
+    return divRoundUp( size, PageSize );
+}
+
+//----------------------------------------------------------------------
 // AddrSpace::~AddrSpace
 // 	Dealloate an address space.  
 //----------------------------------------------------------------------

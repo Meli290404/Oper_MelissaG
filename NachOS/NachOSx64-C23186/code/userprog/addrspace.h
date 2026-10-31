@@ -28,6 +28,8 @@ class AddrSpace {
     AddrSpace( AddrSpace * padre );	// espacio para un hilo creado con fork, comparte codigo y datos con el padre
     ~AddrSpace();			// De-allocate an address space
 
+    static unsigned int paginasNecesarias( OpenFile * ejecutable );	// paginas que ocuparia el programa
+
     void InitRegisters();		// Initialize user-level CPU registers,
 					// before jumping to user code
 
