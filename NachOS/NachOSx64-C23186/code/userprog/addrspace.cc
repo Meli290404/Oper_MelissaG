@@ -77,6 +77,10 @@ AddrSpace::AddrSpace(OpenFile *executable)
     numPages = divRoundUp(size, PageSize);
     size = numPages * PageSize;
 
+    paginasPila = divRoundUp( UserStackSize, PageSize );
+    usuarios = new int;
+    *usuarios = 1;			// este hilo usa el codigo y los datos
+
     // revisar que haya suficientes marcos libres para todo el programa
     ASSERT( numPages <= (unsigned int) machine->mapaMemoria->NumClear() );
 
@@ -140,16 +144,69 @@ void AddrSpace::cargarSegmento( OpenFile * ejecutable, int direccionVirtual, int
 }
 
 //----------------------------------------------------------------------
+// AddrSpace::AddrSpace
+// 	espacio de direcciones para un hilo creado con fork:
+//	las paginas de codigo y datos apuntan a los mismos marcos del padre
+//	y solo las paginas de la pila reciben marcos nuevos
+//----------------------------------------------------------------------
+
+AddrSpace::AddrSpace( AddrSpace * padre )
+{
+    numPages = padre->numPages;
+    paginasPila = padre->paginasPila;
+    unsigned int paginasCompartidas = numPages - paginasPila;
+
+    // revisar que haya marcos libres para la pila del hijo
+    ASSERT( paginasPila <= (unsigned int) machine->mapaMemoria->NumClear() );
+
+    // el hijo se suma a los usuarios del codigo y los datos
+    usuarios = padre->usuarios;
+    (*usuarios)++;
+
+    pageTable = new TranslationEntry[ numPages ];
+
+    // codigo y datos: mismos marcos que el padre
+    for ( unsigned int i = 0; i < paginasCompartidas; i++ ) {
+        pageTable[i] = padre->pageTable[i];
+        DEBUG( 'v', "hijo: pagina virtual %d -> marco %d compartido\n", i, pageTable[i].physicalPage );
+    }
+
+    // pila: marcos nuevos y limpios
+    for ( unsigned int i = paginasCompartidas; i < numPages; i++ ) {
+        pageTable[i].virtualPage = i;
+        pageTable[i].physicalPage = machine->mapaMemoria->Find();
+        pageTable[i].valid = true;
+        pageTable[i].use = false;
+        pageTable[i].dirty = false;
+        pageTable[i].readOnly = false;
+        bzero( &machine->mainMemory[ pageTable[i].physicalPage * PageSize ], PageSize );
+        DEBUG( 'v', "hijo: pagina virtual %d -> marco %d de pila\n", i, pageTable[i].physicalPage );
+    }
+}
+
+//----------------------------------------------------------------------
 // AddrSpace::~AddrSpace
-// 	Dealloate an address space.  Nothing for now!
+// 	Dealloate an address space.  
 //----------------------------------------------------------------------
 
 AddrSpace::~AddrSpace()
 {
-   // devolver los marcos al bitmap para que otros programas los usen
-   for ( unsigned int i = 0; i < numPages; i++ ) {
+   unsigned int paginasCompartidas = numPages - paginasPila;
+
+   // la pila es solo de este hilo, sus marcos siempre se devuelven
+   for ( unsigned int i = paginasCompartidas; i < numPages; i++ ) {
       machine->mapaMemoria->Clear( pageTable[i].physicalPage );
    }
+
+   // el codigo y los datos se devuelven solo cuando ya ningun hilo los usa
+   (*usuarios)--;
+   if ( *usuarios == 0 ) {
+      for ( unsigned int i = 0; i < paginasCompartidas; i++ ) {
+         machine->mapaMemoria->Clear( pageTable[i].physicalPage );
+      }
+      delete usuarios;
+   }
+
    delete [] this->pageTable;
 }
 

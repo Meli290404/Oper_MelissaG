@@ -232,7 +232,11 @@ Cleanup()
 //
     delete stats;
 
-    delete currentThread;
+    // un hilo no se puede borrar a si mismo, si el ultimo en terminar
+    // fue un hilo de usuario creado con fork no se borra
+    if ( strncmp( currentThread->getName(), "main", 4 ) == 0 ) {
+        delete currentThread;
+    }
 
     Exit(0);
 }

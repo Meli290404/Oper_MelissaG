@@ -246,9 +246,47 @@ void NachOS_Close() {		// System call 8
 
 
 /*
+ *  rutina que ejecuta el hilo hijo de fork dentro del kernel
+ *  prepara los registros y salta a la funcion del usuario
+ */
+void NachosForkThread( void * p ) {
+   long funcion = (long) p;
+   AddrSpace * espacio = currentThread->space;
+
+   espacio->InitRegisters();		// registros en cero y puntero de pila al final de su pila
+   espacio->RestoreState();		// cargar la tabla de paginas del hijo en la maquina
+
+   // al terminar la funcion se regresa a la direccion 4 de start.s, que llama a exit
+   machine->WriteRegister( RetAddrReg, 4 );
+
+   // empezar a ejecutar en la funcion que se le paso a fork
+   machine->WriteRegister( PCReg, funcion );
+   machine->WriteRegister( NextPCReg, funcion + 4 );
+
+   machine->Run();			// nunca regresa
+   ASSERT( false );
+}
+
+
+/*
  *  System call interface: void Fork( void (*func)() )
  */
 void NachOS_Fork() {		// System call 9
+   long funcion = machine->ReadRegister( 4 );	// direccion de la funcion en la memoria de nachos
+   char * nombre = new char[ 32 ];
+
+   // el destructor de thread libera el nombre, por eso se pide con new
+   sprintf( nombre, "hilo de %s", currentThread->getName() );
+   Thread * hijo = new Thread( nombre );
+
+   // el hijo comparte codigo, datos y archivos abiertos con el padre, pero tiene su propia pila
+   hijo->space = new AddrSpace( currentThread->space );
+   hijo->tablaArchivos = currentThread->tablaArchivos;
+   hijo->tablaArchivos->addThread();
+
+   DEBUG( 'u', "fork: %s crea a %s en la funcion 0x%x\n", currentThread->getName(), nombre, (int) funcion );
+   hijo->Fork( NachosForkThread, (void *) funcion );
+
 }
 
 
@@ -256,6 +294,7 @@ void NachOS_Fork() {		// System call 9
  *  System call interface: void Yield()
  */
 void NachOS_Yield() {		// System call 10
+   currentThread->Yield();
 }
 
 
@@ -423,6 +462,7 @@ ExceptionHandler(ExceptionType which)
     switch ( which ) {
 
        case SyscallException:
+         DEBUG( 'u', "%s hace el llamado al sistema %d\n", currentThread->getName(), type );
           switch ( type ) {
              case SC_Halt:		// System call # 0
                 NachOS_Halt();

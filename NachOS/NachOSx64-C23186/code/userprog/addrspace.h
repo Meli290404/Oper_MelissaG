@@ -18,13 +18,14 @@
 #include "copyright.h"
 #include "filesys.h"
 
-#define UserStackSize		2048 	// increase this as necessary!
+#define UserStackSize		1280 	// increase this as necessary!
 
 class AddrSpace {
   public:
     AddrSpace(OpenFile *executable);	// Create an address space,
 					// initializing it with the program
 					// stored in the file "executable"
+    AddrSpace( AddrSpace * padre );	// espacio para un hilo creado con fork, comparte codigo y datos con el padre
     ~AddrSpace();			// De-allocate an address space
 
     void InitRegisters();		// Initialize user-level CPU registers,
@@ -39,6 +40,8 @@ class AddrSpace {
 					// for now!
     unsigned int numPages;		// Number of pages in the virtual 
 					// address space
+    unsigned int paginasPila;		// las ultimas paginas de la tabla son la pila propia de este hilo
+    int * usuarios;			// cuantos hilos comparten el codigo y los datos, compartido entre padre e hijos
 };
 
 #endif // ADDRSPACE_H
