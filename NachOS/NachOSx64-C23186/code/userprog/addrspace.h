@@ -34,6 +34,7 @@ class AddrSpace {
     void RestoreState();		// info on a context switch 
 
   private:
+    void cargarSegmento( OpenFile * ejecutable, int direccionVirtual, int tamano, int posicionArchivo );
     TranslationEntry *pageTable;	// Assume linear page table translation
 					// for now!
     unsigned int numPages;		// Number of pages in the virtual 

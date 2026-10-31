@@ -211,6 +211,10 @@ Cleanup()
 #endif
     
 #ifdef USER_PROGRAM
+    // el espacio de direcciones devuelve sus marcos al bitmap de machine
+    // por eso hay que borralo antes que machine
+    delete currentThread->space;
+    currentThread->space = NULL;
     delete machine;
 #endif
 

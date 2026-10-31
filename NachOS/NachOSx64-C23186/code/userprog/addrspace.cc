@@ -77,44 +77,66 @@ AddrSpace::AddrSpace(OpenFile *executable)
     numPages = divRoundUp(size, PageSize);
     size = numPages * PageSize;
 
-    ASSERT(numPages <= NumPhysPages);		// check we're not trying
-						// to run anything too big --
-						// at least until we have
-						// virtual memory
+    // revisar que haya suficientes marcos libres para todo el programa
+    ASSERT( numPages <= (unsigned int) machine->mapaMemoria->NumClear() );
 
     DEBUG('a', "Initializing address space, num pages %d, size %d\n", 
 					numPages, size);
-// first, set up the translation 
+
+    // tabla de paginas: cada pagina virtual recibe un marco libre del bitmap
     this->pageTable = new TranslationEntry[numPages];
     for (i = 0; i < numPages; i++) {
-	pageTable[i].virtualPage = i;	// for now, virtual page # = phys page #
-	pageTable[i].physicalPage = i;
+	pageTable[i].virtualPage = i;
+	pageTable[i].physicalPage = machine->mapaMemoria->Find();	// busca un marco libre y lo marca ocupado
 	pageTable[i].valid = true;
 	pageTable[i].use = false;
 	pageTable[i].dirty = false;
-	pageTable[i].readOnly = false;  // if the code segment was entirely on 
-					// a separate page, we could set its 
-					// pages to be read-only
-    }
-    
-// zero out the entire address space, to zero the unitialized data segment 
-// and the stack segment
-    bzero(machine->mainMemory, size);
+	pageTable[i].readOnly = false;
 
-// then, copy in the code and data segments into memory
+	// limpiar el marco para que los datos no inicializados y la pila empiecen en cero
+	bzero( &machine->mainMemory[ pageTable[i].physicalPage * PageSize ], PageSize );
+
+	DEBUG( 'v', "pagina virtual %d -> marco %d\n", i, pageTable[i].physicalPage );
+    }
+
+    // copiar el codigo y los datos inicializados pagina por pagina
     if (noffH.code.size > 0) {
         DEBUG('a', "Initializing code segment, at 0x%x, size %d\n", 
 			noffH.code.virtualAddr, noffH.code.size);
-        executable->ReadAt(&(machine->mainMemory[noffH.code.virtualAddr]),
-			noffH.code.size, noffH.code.inFileAddr);
+        cargarSegmento( executable, noffH.code.virtualAddr, noffH.code.size, noffH.code.inFileAddr );
     }
     if (noffH.initData.size > 0) {
         DEBUG('a', "Initializing data segment, at 0x%x, size %d\n", 
 			noffH.initData.virtualAddr, noffH.initData.size);
-        executable->ReadAt(&(machine->mainMemory[noffH.initData.virtualAddr]),
-			noffH.initData.size, noffH.initData.inFileAddr);
+        cargarSegmento( executable, noffH.initData.virtualAddr, noffH.initData.size, noffH.initData.inFileAddr );
     }
 
+}
+
+//----------------------------------------------------------------------
+// AddrSpace::cargarSegmento
+// 	copia un segmento del ejecutable a memoria, un pedazo de pagina a la vez,
+//	porque las paginas virtuales seguidas pueden estar en marcos separados
+//----------------------------------------------------------------------
+
+void AddrSpace::cargarSegmento( OpenFile * ejecutable, int direccionVirtual, int tamano, int posicionArchivo )
+{
+    while ( tamano > 0 ) {
+        int pagina = direccionVirtual / PageSize;
+        int desplazamiento = direccionVirtual % PageSize;
+        int cantidad = PageSize - desplazamiento;	// lo que falta para terminar esta pagina
+
+        if ( cantidad > tamano ) {
+            cantidad = tamano;
+        }
+
+        int direccionFisica = pageTable[ pagina ].physicalPage * PageSize + desplazamiento;
+        ejecutable->ReadAt( &machine->mainMemory[ direccionFisica ], cantidad, posicionArchivo );
+
+        direccionVirtual += cantidad;
+        posicionArchivo += cantidad;
+        tamano -= cantidad;
+    }
 }
 
 //----------------------------------------------------------------------
@@ -124,6 +146,10 @@ AddrSpace::AddrSpace(OpenFile *executable)
 
 AddrSpace::~AddrSpace()
 {
+   // devolver los marcos al bitmap para que otros programas los usen
+   for ( unsigned int i = 0; i < numPages; i++ ) {
+      machine->mapaMemoria->Clear( pageTable[i].physicalPage );
+   }
    delete [] this->pageTable;
 }
 

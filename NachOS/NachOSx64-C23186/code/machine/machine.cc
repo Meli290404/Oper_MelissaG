@@ -61,6 +61,7 @@ Machine::Machine(bool debug)
     mainMemory = new char[MemorySize];
     for (i = 0; i < MemorySize; i++)
       	mainMemory[i] = 0;
+    mapaMemoria = new BitMap( NumPhysPages );	// todos los marcos empiezan libres
 #ifdef USE_TLB
     tlb = new TranslationEntry[TLBSize];
     for (i = 0; i < TLBSize; i++)
@@ -83,6 +84,7 @@ Machine::Machine(bool debug)
 Machine::~Machine()
 {
     delete [] mainMemory;
+    delete mapaMemoria;
     if (tlb != NULL)
         delete [] tlb;
 }

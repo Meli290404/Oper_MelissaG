@@ -31,8 +31,20 @@ StartProcess(const char *filename)
 	printf("Unable to open file %s\n", filename);
 	return;
     }
+ 
 
-    currentThread->space = new AddrSpace(executable);    
+    // prueba temporal: ocupar algunos marcos antes de cargar el programa
+    //int ocupados[] = { 0, 1, 3, 5, 8, 9, 12 };
+    //for ( int k = 0; k < 7; k++ ) {
+    //    machine->mapaMemoria->Mark( ocupados[ k ] );
+    //}
+
+    currentThread->space = new AddrSpace(executable);
+
+    // liberar los marcos de la prueba
+    //for ( int k = 0; k < 7; k++ ) {
+    //    machine->mapaMemoria->Clear( ocupados[ k ] );
+    //}
 
     delete executable;			// close file
 
