@@ -30,6 +30,17 @@
 
 #define SC_NachOS	015177
 
+/*
+ *  Avanza los registros del PC para que, al volver al programa de usuario,
+ *  se ejecute la instruccion siguiente al "syscall" 
+ */
+void returnFromSystemCall() {
+
+   machine->WriteRegister( PrevPCReg, machine->ReadRegister( PCReg ) );
+   machine->WriteRegister( PCReg, machine->ReadRegister( NextPCReg ) );
+   machine->WriteRegister( NextPCReg, machine->ReadRegister( NextPCReg ) + 4 );
+
+}
 
 /*
  *  System call interface: Halt()
@@ -46,7 +57,10 @@ void NachOS_Halt() {		// System call 0
  *  System call interface: void Exit( int )
  */
 void NachOS_Exit() {		// System call 1
+   int status = machine->ReadRegister( 4 );
 
+   DEBUG( 'a', "Exit con estado %d\n", status );
+   currentThread->Finish();
 }
 
 
@@ -81,7 +95,42 @@ void NachOS_Open() {		// System call 5
 /*
  *  System call interface: OpenFileId Write( char *, int, OpenFileId )
  */
-void NachOS_Write() {		// System call 6
+void NachOS_Write() {		// System call 7
+   int direccion = machine->ReadRegister( 4 );	// char * buffer, en memoria MIPS
+   int tamano = machine->ReadRegister( 5 );	// int size
+   OpenFileId id = machine->ReadRegister( 6 );	// OpenFileId id
+   char * buffer = new char[ tamano + 1 ];
+   int caracter;
+
+   // Copiar el buffer de la memoria de NachOS a la memoria de Linux, byte por byte
+   for ( int i = 0; i < tamano; i++ ) {
+      machine->ReadMem( direccion + i, 1, &caracter );
+      buffer[ i ] = (char) caracter;
+   }
+   buffer[ tamano ] = 0;
+
+   switch ( id ) {
+      case ConsoleInput:		// no se puede escribir en la entrada
+         machine->WriteRegister( 2, -1 );
+         break;
+      case ConsoleOutput:
+         fwrite( buffer, 1, tamano, stdout );
+         fflush( stdout );
+         stats->numConsoleCharsWritten += tamano;
+         machine->WriteRegister( 2, tamano );
+         break;
+      case ConsoleError:
+         fwrite( buffer, 1, tamano, stderr );
+         fflush( stderr );
+         machine->WriteRegister( 2, tamano );
+         break;
+      default:			// archivos: paso 3
+         machine->WriteRegister( 2, -1 );
+         break;
+   }
+
+   delete [] buffer;
+
 }
 
 
@@ -381,6 +430,7 @@ ExceptionHandler(ExceptionType which)
                 ASSERT( false );
                 break;
           }
+          returnFromSystemCall();	// avanzar el PC despues de cualquier llamado
           break;
 
        case PageFaultException: {
