@@ -88,6 +88,26 @@ int nuevoProceso() {
 }
 
 /*
+ *  tablas del kernel para los semaforos, locks y variables de condicion
+ *  que piden los programas de usuario, el programa solo conoce el indice
+ */
+#define MAX_SINCRONIZACION 64
+
+BitMap * mapaSemaforos = new BitMap( MAX_SINCRONIZACION );
+Semaphore * semaforos[ MAX_SINCRONIZACION ];
+
+BitMap * mapaLocks = new BitMap( MAX_SINCRONIZACION );
+Lock * locks[ MAX_SINCRONIZACION ];
+
+BitMap * mapaCondiciones = new BitMap( MAX_SINCRONIZACION );
+Condition * condiciones[ MAX_SINCRONIZACION ];
+
+// revisa que el indice este dentro de la tabla y que este ocupado
+bool idValido( BitMap * mapa, int id ) {
+   return id >= 0 && id < MAX_SINCRONIZACION && mapa->Test( id );
+}
+
+/*
  *  System call interface: Halt()
  */
 void NachOS_Halt() {		// System call 0
@@ -389,6 +409,11 @@ void NachosForkThread( void * p ) {
  */
 void NachOS_Fork() {		// System call 9
    long funcion = machine->ReadRegister( 4 );	// direccion de la funcion en la memoria de nachos
+   // revisar que haya marcos libres para la pila del hijo
+   if ( currentThread->space->paginasDePila() > (unsigned int) machine->mapaMemoria->NumClear() ) {
+      DEBUG( 'u', "fork: no hay memoria para la pila de otro hilo\n" );
+      return;
+   }
    char * nombre = new char[ 32 ];
 
    // el destructor de thread libera el nombre, por eso se pide con new
@@ -418,6 +443,14 @@ void NachOS_Yield() {		// System call 10
  *  System call interface: Sem_t SemCreate( int )
  */
 void NachOS_SemCreate() {		// System call 11
+   int valorInicial = machine->ReadRegister( 4 );
+   int id = mapaSemaforos->Find();
+
+   if ( id != -1 ) {
+      semaforos[ id ] = new Semaphore( "semaforo de usuario", valorInicial );
+   }
+
+   machine->WriteRegister( 2, id );	// -1 si la tabla esta llena
 }
 
 
@@ -425,6 +458,16 @@ void NachOS_SemCreate() {		// System call 11
  *  System call interface: int SemDestroy( Sem_t )
  */
 void NachOS_SemDestroy() {		// System call 12
+   int id = machine->ReadRegister( 4 );
+
+   if ( idValido( mapaSemaforos, id ) ) {
+      semaforos[ id ]->Destroy();	// despierta a los que esperaban en el semaforo
+      delete semaforos[ id ];
+      mapaSemaforos->Clear( id );
+      machine->WriteRegister( 2, 0 );
+   } else {
+      machine->WriteRegister( 2, -1 );
+   }
 }
 
 
@@ -432,6 +475,14 @@ void NachOS_SemDestroy() {		// System call 12
  *  System call interface: int SemSignal( Sem_t )
  */
 void NachOS_SemSignal() {		// System call 13
+   int id = machine->ReadRegister( 4 );
+
+   if ( idValido( mapaSemaforos, id ) ) {
+      semaforos[ id ]->V();
+      machine->WriteRegister( 2, 0 );
+   } else {
+      machine->WriteRegister( 2, -1 );
+   }
 }
 
 
@@ -439,6 +490,14 @@ void NachOS_SemSignal() {		// System call 13
  *  System call interface: int SemWait( Sem_t )
  */
 void NachOS_SemWait() {		// System call 14
+   int id = machine->ReadRegister( 4 );
+
+   if ( idValido( mapaSemaforos, id ) ) {
+      semaforos[ id ]->P();		// si el valor es cero el hilo se duerme aqui
+      machine->WriteRegister( 2, 0 );
+   } else {
+      machine->WriteRegister( 2, -1 );
+   }
 }
 
 
@@ -446,6 +505,13 @@ void NachOS_SemWait() {		// System call 14
  *  System call interface: Lock_t LockCreate( int )
  */
 void NachOS_LockCreate() {		// System call 15
+   int id = mapaLocks->Find();
+
+   if ( id != -1 ) {
+      locks[ id ] = new Lock( "lock de usuario" );
+   }
+
+   machine->WriteRegister( 2, id );
 }
 
 
@@ -453,6 +519,15 @@ void NachOS_LockCreate() {		// System call 15
  *  System call interface: int LockDestroy( Lock_t )
  */
 void NachOS_LockDestroy() {		// System call 16
+   int id = machine->ReadRegister( 4 );
+
+   if ( idValido( mapaLocks, id ) ) {
+      delete locks[ id ];
+      mapaLocks->Clear( id );
+      machine->WriteRegister( 2, 0 );
+   } else {
+      machine->WriteRegister( 2, -1 );
+   }
 }
 
 
@@ -460,6 +535,14 @@ void NachOS_LockDestroy() {		// System call 16
  *  System call interface: int LockAcquire( Lock_t )
  */
 void NachOS_LockAcquire() {		// System call 17
+   int id = machine->ReadRegister( 4 );
+
+   if ( idValido( mapaLocks, id ) ) {
+      locks[ id ]->Acquire();
+      machine->WriteRegister( 2, 0 );
+   } else {
+      machine->WriteRegister( 2, -1 );
+   }
 }
 
 
@@ -467,6 +550,15 @@ void NachOS_LockAcquire() {		// System call 17
  *  System call interface: int LockRelease( Lock_t )
  */
 void NachOS_LockRelease() {		// System call 18
+   int id = machine->ReadRegister( 4 );
+
+   // solo el hilo que tiene el lock lo puede liberar
+   if ( idValido( mapaLocks, id ) && locks[ id ]->isHeldByCurrentThread() ) {
+      locks[ id ]->Release();
+      machine->WriteRegister( 2, 0 );
+   } else {
+      machine->WriteRegister( 2, -1 );
+   }
 }
 
 
@@ -474,6 +566,13 @@ void NachOS_LockRelease() {		// System call 18
  *  System call interface: Cond_t LockCreate( int )
  */
 void NachOS_CondCreate() {		// System call 19
+   int id = mapaCondiciones->Find();
+
+   if ( id != -1 ) {
+      condiciones[ id ] = new Condition( "condicion de usuario" );
+   }
+
+   machine->WriteRegister( 2, id );
 }
 
 
@@ -481,6 +580,15 @@ void NachOS_CondCreate() {		// System call 19
  *  System call interface: int CondDestroy( Cond_t )
  */
 void NachOS_CondDestroy() {		// System call 20
+   int id = machine->ReadRegister( 4 );
+
+   if ( idValido( mapaCondiciones, id ) ) {
+      delete condiciones[ id ];
+      mapaCondiciones->Clear( id );
+      machine->WriteRegister( 2, 0 );
+   } else {
+      machine->WriteRegister( 2, -1 );
+   }
 }
 
 
@@ -488,6 +596,17 @@ void NachOS_CondDestroy() {		// System call 20
  *  System call interface: int CondSignal( Cond_t )
  */
 void NachOS_CondSignal() {		// System call 21
+   int idCondicion = machine->ReadRegister( 4 );
+   int idLock = machine->ReadRegister( 5 );
+
+   // la condicion se usa siempre con un lock que el hilo ya tiene
+   if ( idValido( mapaCondiciones, idCondicion ) && idValido( mapaLocks, idLock )
+        && locks[ idLock ]->isHeldByCurrentThread() ) {
+      condiciones[ idCondicion ]->Signal( locks[ idLock ] );
+      machine->WriteRegister( 2, 0 );
+   } else {
+      machine->WriteRegister( 2, -1 );
+   }
 }
 
 
@@ -495,6 +614,17 @@ void NachOS_CondSignal() {		// System call 21
  *  System call interface: int CondWait( Cond_t )
  */
 void NachOS_CondWait() {		// System call 22
+   int idCondicion = machine->ReadRegister( 4 );
+   int idLock = machine->ReadRegister( 5 );
+
+   // la condicion se usa siempre con un lock que el hilo ya tiene
+   if ( idValido( mapaCondiciones, idCondicion ) && idValido( mapaLocks, idLock )
+        && locks[ idLock ]->isHeldByCurrentThread() ) {
+      condiciones[ idCondicion ]->Wait( locks[ idLock ] );
+      machine->WriteRegister( 2, 0 );
+   } else {
+      machine->WriteRegister( 2, -1 );
+   }
 }
 
 
@@ -502,6 +632,17 @@ void NachOS_CondWait() {		// System call 22
  *  System call interface: int CondBroadcast( Cond_t )
  */
 void NachOS_CondBroadcast() {		// System call 23
+   int idCondicion = machine->ReadRegister( 4 );
+   int idLock = machine->ReadRegister( 5 );
+
+   // la condicion se usa siempre con un lock que el hilo ya tiene
+   if ( idValido( mapaCondiciones, idCondicion ) && idValido( mapaLocks, idLock )
+        && locks[ idLock ]->isHeldByCurrentThread() ) {
+      condiciones[ idCondicion ]->Broadcast( locks[ idLock ] );
+      machine->WriteRegister( 2, 0 );
+   } else {
+      machine->WriteRegister( 2, -1 );
+   }
 }
 
 

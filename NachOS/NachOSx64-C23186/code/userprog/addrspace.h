@@ -29,6 +29,7 @@ class AddrSpace {
     ~AddrSpace();			// De-allocate an address space
 
     static unsigned int paginasNecesarias( OpenFile * ejecutable );	// paginas que ocuparia el programa
+    unsigned int paginasDePila() { return paginasPila; }		// paginas que necesita cada hilo nuevo
 
     void InitRegisters();		// Initialize user-level CPU registers,
 					// before jumping to user code
