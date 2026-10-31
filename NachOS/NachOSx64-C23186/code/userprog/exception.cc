@@ -28,6 +28,9 @@
 #include "system.h"
 #include "syscall.h"
 
+#include <fcntl.h>
+#include <unistd.h>
+
 #define SC_NachOS	015177
 
 /*
@@ -40,6 +43,22 @@ void returnFromSystemCall() {
    machine->WriteRegister( PCReg, machine->ReadRegister( NextPCReg ) );
    machine->WriteRegister( NextPCReg, machine->ReadRegister( NextPCReg ) + 4 );
 
+}
+
+/*
+ *  copiar un string terminado en cero de la memoria de nachos a un buffer de linux
+ */
+void leerCadena( int direccion, char * destino, int maximo ) {
+   int caracter;
+   int i = 0;
+
+   do {
+      machine->ReadMem( direccion + i, 1, &caracter );
+      destino[ i ] = (char) caracter;
+      i++;
+   } while ( caracter != 0 && i < maximo );
+
+   destino[ maximo - 1 ] = 0;		// por si el string no cabia completo
 }
 
 /*
@@ -82,6 +101,20 @@ void NachOS_Join() {		// System call 3
  *  System call interface: void Create( char * )
  */
 void NachOS_Create() {		// System call 4
+   char nombre[ 256 ];
+   int unixHandle;
+
+   leerCadena( machine->ReadRegister( 4 ), nombre, 256 );
+
+   // crea el archivo vacio en linux, o lo trunca si ya existia
+   unixHandle = creat( nombre, 0666 );
+   if ( unixHandle != -1 ) {
+      close( unixHandle );
+      machine->WriteRegister( 2, 0 );
+   } else {
+      machine->WriteRegister( 2, -1 );
+   }
+
 }
 
 
@@ -89,6 +122,23 @@ void NachOS_Create() {		// System call 4
  *  System call interface: OpenFileId Open( char * )
  */
 void NachOS_Open() {		// System call 5
+   char nombre[ 256 ];
+   int unixHandle;
+   int nachosHandle = -1;
+
+   leerCadena( machine->ReadRegister( 4 ), nombre, 256 );
+
+   unixHandle = open( nombre, O_RDWR );
+   if ( unixHandle != -1 ) {
+      nachosHandle = currentThread->tablaArchivos->Open( unixHandle );
+      if ( nachosHandle == -1 ) {	// tabla llena
+         close( unixHandle );
+      }
+   }
+
+   DEBUG( 'f', "open %s -> nachos %d, unix %d\n", nombre, nachosHandle, unixHandle );
+   machine->WriteRegister( 2, nachosHandle );
+
 }
 
 
@@ -124,8 +174,13 @@ void NachOS_Write() {		// System call 7
          fflush( stderr );
          machine->WriteRegister( 2, tamano );
          break;
-      default:			// archivos: paso 3
-         machine->WriteRegister( 2, -1 );
+      default:			// archivos abiertos con open
+         if ( currentThread->tablaArchivos->isOpened( id ) ) {
+            int escritos = write( currentThread->tablaArchivos->getUnixHandle( id ), buffer, tamano );
+            machine->WriteRegister( 2, escritos );
+         } else {
+            machine->WriteRegister( 2, -1 );
+         }
          break;
    }
 
@@ -137,7 +192,39 @@ void NachOS_Write() {		// System call 7
 /*
  *  System call interface: OpenFileId Read( char *, int, OpenFileId )
  */
-void NachOS_Read() {		// System call 7
+void NachOS_Read() {		// System call 6
+   int direccion = machine->ReadRegister( 4 );	// buffer del programa de usuario
+   int tamano = machine->ReadRegister( 5 );
+   OpenFileId id = machine->ReadRegister( 6 );
+   char * buffer = new char[ tamano ];
+   int leidos = -1;
+
+   switch ( id ) {
+      case ConsoleInput:
+         leidos = read( 0, buffer, tamano );
+         if ( leidos > 0 ) {
+            stats->numConsoleCharsRead += leidos;
+         }
+         break;
+      case ConsoleOutput:		// no se puede leer de la salida
+      case ConsoleError:
+         leidos = -1;
+         break;
+      default:
+         if ( currentThread->tablaArchivos->isOpened( id ) ) {
+            leidos = read( currentThread->tablaArchivos->getUnixHandle( id ), buffer, tamano );
+         }
+         break;
+   }
+
+   // copiar lo leido de la memoria de linux a la memoria de nachos, byte por byte
+   for ( int i = 0; i < leidos; i++ ) {
+      machine->WriteMem( direccion + i, 1, buffer[ i ] );
+   }
+
+   machine->WriteRegister( 2, leidos );
+   delete [] buffer;
+
 }
 
 
@@ -145,6 +232,16 @@ void NachOS_Read() {		// System call 7
  *  System call interface: void Close( OpenFileId )
  */
 void NachOS_Close() {		// System call 8
+   OpenFileId id = machine->ReadRegister( 4 );
+   int unixHandle = currentThread->tablaArchivos->Close( id );
+
+   if ( unixHandle != -1 ) {
+      close( unixHandle );
+      machine->WriteRegister( 2, 0 );
+   } else {
+      machine->WriteRegister( 2, -1 );
+   }
+
 }
 
 

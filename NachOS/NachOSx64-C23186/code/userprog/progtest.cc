@@ -48,6 +48,10 @@ StartProcess(const char *filename)
 
     delete executable;			// close file
 
+    // el primer hilo del proceso crea su tabla de archivos abiertos
+    currentThread->tablaArchivos = new NachosOpenFilesTable();
+    currentThread->tablaArchivos->addThread();
+
     currentThread->space->InitRegisters();		// set the initial register values
     currentThread->space->RestoreState();		// load page table register
 
