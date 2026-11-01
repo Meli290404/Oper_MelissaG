@@ -31,6 +31,10 @@
 
 #include <fcntl.h>
 #include <unistd.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
 #define SC_NachOS	015177
 
@@ -650,13 +654,62 @@ void NachOS_CondBroadcast() {		// System call 23
  *  System call interface: Socket_t Socket( int, int )
  */
 void NachOS_Socket() {			// System call 30
+   int familia = machine->ReadRegister( 4 );	// 0 ipv4, 1 ipv6
+   int tipo = machine->ReadRegister( 5 );	// 0 stream, 1 datagramas
+   int unixHandle;
+   int nachosHandle = -1;
+
+   unixHandle = socket( familia == AF_INET6_NachOS ? AF_INET6 : AF_INET,
+                        tipo == SOCK_DGRAM_NachOS ? SOCK_DGRAM : SOCK_STREAM, 0 );
+
+   // el socket se guarda en la misma tabla que los archivos,
+   // asi read, write y close funcionan igual con sockets
+   if ( unixHandle != -1 ) {
+      nachosHandle = currentThread->tablaArchivos->Open( unixHandle );
+      if ( nachosHandle == -1 ) {
+         close( unixHandle );
+      }
+   }
+
+   DEBUG( 'n', "socket -> nachos %d, unix %d\n", nachosHandle, unixHandle );
+   machine->WriteRegister( 2, nachosHandle );
 }
 
 
 /*
- *  System call interface: Socket_t Connect( char *, int )
+ *  System call interface: int Connect( Socket_t, char *, int )
  */
 void NachOS_Connect() {		// System call 31
+   int id = machine->ReadRegister( 4 );
+   char ip[ 64 ];
+   int puerto = machine->ReadRegister( 6 );
+   int unixHandle = currentThread->tablaArchivos->getUnixHandle( id );
+   int resultado = -1;
+
+   leerCadena( machine->ReadRegister( 5 ), ip, 64 );
+
+   if ( unixHandle != -1 ) {
+      if ( strchr( ip, ':' ) != NULL ) {	// una direccion con dos puntos es ipv6
+         struct sockaddr_in6 direccion;
+         memset( &direccion, 0, sizeof( direccion ) );
+         direccion.sin6_family = AF_INET6;
+         direccion.sin6_port = htons( puerto );
+         if ( inet_pton( AF_INET6, ip, &direccion.sin6_addr ) == 1 ) {
+            resultado = connect( unixHandle, (struct sockaddr *) &direccion, sizeof( direccion ) );
+         }
+      } else {
+         struct sockaddr_in direccion;
+         memset( &direccion, 0, sizeof( direccion ) );
+         direccion.sin_family = AF_INET;
+         direccion.sin_port = htons( puerto );
+         if ( inet_pton( AF_INET, ip, &direccion.sin_addr ) == 1 ) {
+            resultado = connect( unixHandle, (struct sockaddr *) &direccion, sizeof( direccion ) );
+         }
+      }
+   }
+
+   DEBUG( 'n', "connect %s:%d -> %d\n", ip, puerto, resultado );
+   machine->WriteRegister( 2, resultado );
 }
 
 
@@ -664,6 +717,27 @@ void NachOS_Connect() {		// System call 31
  *  System call interface: int Bind( Socket_t, int )
  */
 void NachOS_Bind() {		// System call 32
+   int id = machine->ReadRegister( 4 );
+   int puerto = machine->ReadRegister( 5 );
+   int unixHandle = currentThread->tablaArchivos->getUnixHandle( id );
+   int resultado = -1;
+
+   if ( unixHandle != -1 ) {
+      struct sockaddr_in direccion;
+      int reusar = 1;
+
+      // permite volver a usar el puerto apenas se cierra el servidor
+      setsockopt( unixHandle, SOL_SOCKET, SO_REUSEADDR, &reusar, sizeof( reusar ) );
+
+      memset( &direccion, 0, sizeof( direccion ) );
+      direccion.sin_family = AF_INET;
+      direccion.sin_addr.s_addr = htonl( INADDR_ANY );	// escucha en todas las interfaces
+      direccion.sin_port = htons( puerto );
+      resultado = bind( unixHandle, (struct sockaddr *) &direccion, sizeof( direccion ) );
+   }
+
+   DEBUG( 'n', "bind puerto %d -> %d\n", puerto, resultado );
+   machine->WriteRegister( 2, resultado );
 }
 
 
@@ -671,6 +745,16 @@ void NachOS_Bind() {		// System call 32
  *  System call interface: int Listen( Socket_t, int )
  */
 void NachOS_Listen() {		// System call 33
+   int id = machine->ReadRegister( 4 );
+   int cola = machine->ReadRegister( 5 );
+   int unixHandle = currentThread->tablaArchivos->getUnixHandle( id );
+   int resultado = -1;
+
+   if ( unixHandle != -1 ) {
+      resultado = listen( unixHandle, cola );
+   }
+
+   machine->WriteRegister( 2, resultado );
 }
 
 
@@ -678,13 +762,40 @@ void NachOS_Listen() {		// System call 33
  *  System call interface: int Accept( Socket_t )
  */
 void NachOS_Accept() {		// System call 34
+   int id = machine->ReadRegister( 4 );
+   int unixHandle = currentThread->tablaArchivos->getUnixHandle( id );
+   int nachosHandle = -1;
+
+   if ( unixHandle != -1 ) {
+      // espera un cliente, el socket nuevo tambien entra en la tabla
+      int cliente = accept( unixHandle, NULL, NULL );
+      if ( cliente != -1 ) {
+         nachosHandle = currentThread->tablaArchivos->Open( cliente );
+         if ( nachosHandle == -1 ) {
+            close( cliente );
+         }
+      }
+   }
+
+   DEBUG( 'n', "accept -> nachos %d\n", nachosHandle );
+   machine->WriteRegister( 2, nachosHandle );
 }
 
 
 /*
  *  System call interface: int Shutdown( Socket_t, int )
  */
-void NachOS_Shutdown() {	// System call 25
+void NachOS_Shutdown() {	// System call 35
+   int id = machine->ReadRegister( 4 );
+   int modo = machine->ReadRegister( 5 );	// 0 lectura, 1 escritura, 2 ambos
+   int unixHandle = currentThread->tablaArchivos->getUnixHandle( id );
+   int resultado = -1;
+
+   if ( unixHandle != -1 ) {
+      resultado = shutdown( unixHandle, modo );
+   }
+
+   machine->WriteRegister( 2, resultado );
 }
 
 

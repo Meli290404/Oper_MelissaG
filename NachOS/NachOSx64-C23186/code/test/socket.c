@@ -19,22 +19,38 @@ int strlen(const char *str) {
 
 int main() {
    int id;
+   int n;
    char a[ 512 ];
-   char * req = "GET /aArt/index.php?disk=Disk-01&fig=";
+   char req[ 300 ];		// el pedido se arma en un arreglo propio, no sobre un texto constante
    char s[ 50 ];
+
+   req[ 0 ] = 0;
+   strcat( req, "GET /aArt/index.php?disk=Disk-01&fig=" );
 
    id = Socket( AF_INET_NachOS, SOCK_STREAM_NachOS );
    Connect( id, "163.178.104.62", 80 );
    Write( "Figura: ", 8, 1 );
-   Read( s, 50, 0 );
-   req = strcat( req, s );
-   req = strcat( req, " HTTP/1.0\r\nUser-Agent: nachos\r\n\r\n\r\n" );
-   Write( req, strlen( req ), 1 );
-//   Write( "GET / HTTP/1.0\r\n\r\n", 32, id );
-   Write( req, strlen( req ), id );
-   Read( a, 512, id );
-   Write( a, 512, 1 );
-   Close( id );
 
+   // read trae tambien el cambio de linea del enter, se cambia por el fin del string
+   n = Read( s, 49, 0 );
+   if ( n < 0 ) {
+      n = 0;
+   }
+   if ( n > 0 && s[ n - 1 ] == '\n' ) {
+      n--;
+   }
+   s[ n ] = 0;
+
+   strcat( req, s );
+   strcat( req, " HTTP/1.0\r\nUser-Agent: nachos\r\n\r\n" );
+   Write( req, strlen( req ), 1 );
+   Write( req, strlen( req ), id );
+
+   // leer la respuesta completa, read devuelve 0 cuando el servidor cierra la conexion
+   while ( ( n = Read( a, 512, id ) ) > 0 ) {
+      Write( a, n, 1 );
+   }
+
+   Close( id );
 }
 
