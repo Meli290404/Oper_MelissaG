@@ -35,6 +35,9 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <errno.h>
+#include <sys/ipc.h>
+#include <sys/msg.h>
 
 #define SC_NachOS	015177
 
@@ -798,6 +801,112 @@ void NachOS_Shutdown() {	// System call 35
    machine->WriteRegister( 2, resultado );
 }
 
+/*
+ *  buzones: cada buzon de nachos es una cola de mensajes system v de linux,
+ *  asi un programa de nachos y un programa de linux pueden usar el mismo buzon
+ *  si usan la misma llave
+ */
+#define MAX_MENSAJE 512
+
+struct MensajeBuzon {
+   long tipo;				// system v pide que el mensaje empiece con un long
+   char texto[ MAX_MENSAJE ];
+};
+
+
+/*
+ *  System call interface: int MsgGet( int, int )
+ */
+void NachOS_MsgGet() {		// System call 50
+   int llave = machine->ReadRegister( 4 );
+   int bandera = machine->ReadRegister( 5 );
+
+   // si ya existe una cola con esa llave devuelve la misma, si no la crea
+   int id = msgget( llave, IPC_CREAT | 0600 | bandera );
+
+   DEBUG( 'u', "msgget llave %d -> buzon %d\n", llave, id );
+   machine->WriteRegister( 2, id );
+}
+
+
+/*
+ *  System call interface: int MsgCtl( int, int )
+ */
+void NachOS_MsgCtl() {		// System call 51
+   int id = machine->ReadRegister( 4 );
+   int operacion = machine->ReadRegister( 5 );
+   int resultado = -1;
+
+   if ( operacion == IPC_RMID_NachOS ) {
+      resultado = msgctl( id, IPC_RMID, NULL );	// destruye la cola en linux
+   }
+
+   DEBUG( 'u', "msgctl buzon %d operacion %d -> %d\n", id, operacion, resultado );
+   machine->WriteRegister( 2, resultado );
+}
+
+
+/*
+ *  System call interface: int MsgRcv( int, int, void * )
+ */
+void NachOS_MsgRcv() {		// System call 52
+   int id = machine->ReadRegister( 4 );		// identificador del buzon
+   int tamano = machine->ReadRegister( 5 );	// tamaño del buffer
+   int direccion = machine->ReadRegister( 6 );	// buffer en la memoria de nachos
+   MensajeBuzon mensaje;
+   int recibidos;
+
+   if ( tamano > MAX_MENSAJE ) {
+      tamano = MAX_MENSAJE;
+   }
+
+   // se pregunta sin bloquear, si no hay mensaje se cede el cpu a otros hilos de nachos
+   // porque un msgrcv bloqueante detendria a todo nachos
+   do {
+      recibidos = msgrcv( id, &mensaje, tamano, 0, IPC_NOWAIT | MSG_NOERROR );
+      if ( recibidos == -1 && errno == ENOMSG ) {
+         currentThread->Yield();
+         usleep( 1000 );			// evita gastar todo el cpu mientras se espera
+      }
+   } while ( recibidos == -1 && errno == ENOMSG );
+
+   // copiar el mensaje de la memoria de linux a la memoria de nachos
+   for ( int i = 0; i < recibidos; i++ ) {
+      machine->WriteMem( direccion + i, 1, mensaje.texto[ i ] );
+   }
+
+   DEBUG( 'u', "msgrcv buzon %d -> %d bytes\n", id, recibidos );
+   machine->WriteRegister( 2, recibidos );
+}
+
+
+/*
+ *  System call interface: int MsgSnd( int, int, void * )
+ */
+void NachOS_MsgSnd() {		// System call 53
+   int id = machine->ReadRegister( 4 );		// identificador del buzon
+   int tamano = machine->ReadRegister( 5 );	// tamaño del mensaje
+   int direccion = machine->ReadRegister( 6 );	// mensaje en la memoria de nachos
+   MensajeBuzon mensaje;
+   int caracter;
+   int resultado;
+
+   if ( tamano > MAX_MENSAJE ) {
+      tamano = MAX_MENSAJE;
+   }
+
+   // copiar el mensaje de la memoria de nachos a la memoria de linux
+   for ( int i = 0; i < tamano; i++ ) {
+      machine->ReadMem( direccion + i, 1, &caracter );
+      mensaje.texto[ i ] = (char) caracter;
+   }
+
+   mensaje.tipo = 1;			// todos los mensajes usan el mismo tipo
+   resultado = msgsnd( id, &mensaje, tamano, 0 );
+
+   DEBUG( 'u', "msgsnd buzon %d, %d bytes -> %d\n", id, tamano, resultado );
+   machine->WriteRegister( 2, resultado );
+}
 
 //----------------------------------------------------------------------
 // ExceptionHandler
@@ -928,6 +1037,19 @@ ExceptionHandler(ExceptionType which)
              case SC_Shutdown:	// System call # 33
 		NachOS_Shutdown();
                break;
+
+             case SC_MsgGet:		// System call # 50
+                NachOS_MsgGet();
+                break;
+             case SC_MsgCtl:		// System call # 51
+                NachOS_MsgCtl();
+                break;
+             case SC_MsgRcv:		// System call # 52
+                NachOS_MsgRcv();
+                break;
+             case SC_MsgSnd:		// System call # 53
+                NachOS_MsgSnd();
+                break;
 
              default:
                 printf("NachOS version: %d-%d\n", (SC_User + SC_NachOS)/10, (SC_Base + SC_NachOS)%10 );

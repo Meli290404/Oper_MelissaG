@@ -1,4 +1,10 @@
 *.o
+*.coff
 nachos
+nachos.1
+nachos.2
 swtch.s
+strt.s
 *~
+enviarLinux
+recibirLinux

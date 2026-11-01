@@ -59,6 +59,14 @@
 #define SC_Accept	34
 #define SC_Shutdown	35
 
+/*
+ *  buzones, llamados al sistema para enviar y recibir mensajes entre procesos
+ */
+#define SC_MsgGet	50
+#define SC_MsgCtl	51
+#define SC_MsgRcv	52
+#define SC_MsgSnd	53
+
 #define SC_User		0x00ECCI
 #define SC_Base		032215
 #define SC_Ver		"2026-2"
@@ -234,6 +242,24 @@ int Accept( Socket_t SockId );
 
 /* Shutdowns a socket connection, mode indicates Read, Write, ReadWrite */
 int Shutdown( Socket_t SockId, int mode );
+
+/*
+ *  buzones de mensajes
+ */
+#define IPC_RMID_NachOS		0	/* operacion de MsgCtl para destruir el buzon */
+
+/* Build a mailbox for message interchange, first argument is mailbox key, flag to system call */
+int MsgGet( int key, int flag );
+
+/* Mailbox control routine: close, destroy */
+int MsgCtl( int id, int op );
+
+/* Mailbox send routine */
+int MsgSnd( int id, int len, void * buffer );
+
+/* Mailbox receive routine */
+int MsgRcv( int id, int len, void * buffer );
+
 
 #endif /* IN_ASM */
 
